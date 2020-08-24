@@ -2,6 +2,7 @@ from datetime import datetime
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 
 
 class Trainer(object):
@@ -11,8 +12,7 @@ class Trainer(object):
     """
 
     def __init__(self, model, optimizer, criterion, trainLoader, testLoader, logPath):
-        # self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.device = 'cpu'
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.writer = SummaryWriter(logPath)
 
         self.model = model.to(self.device)
@@ -37,8 +37,8 @@ class Trainer(object):
 
         for batch in self.trainLoader:
             self.optim.zero_grad()
-            batch = [x.to(self.device) for x in batch]
-            loss = self.calc_loss(*batch)
+            
+            loss = self.calc_loss(batch.to(self.device))
             runningLoss += loss.item()
             loss.backward()
             self.optim.step()
@@ -51,8 +51,7 @@ class Trainer(object):
 
         with torch.no_grad():
             for batch in self.testLoader:
-                batch = [x.to(self.device) for x in batch]
-                loss = self.calc_loss(*batch)
+                loss = self.calc_loss(batch.to(self.device))
                 runningLoss += loss.item()
 
         return runningLoss / self._lenTest
@@ -132,6 +131,7 @@ class Trainer(object):
 
         self.writer.close()
         torch.save(self.model.state_dict(), dictPath + '.pth')
+        self._save_checkpoint(epoch, dictPath)
         print(f"Training run completed\n Parameters saved to '{dictPath}'")
 
         return self.model
