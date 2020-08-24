@@ -18,7 +18,7 @@ from matplotlib.widgets import Slider, Button
 import numpy as np
 
 from util.Trainer import Trainer
-from midi96 import samples_to_midi
+from util.midi import samples_to_midi
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

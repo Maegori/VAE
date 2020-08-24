@@ -1,0 +1,31 @@
+--2020-08-25 00:05:11--  https://www.vgmusic.com/music/console/
+Resolving www.vgmusic.com (www.vgmusic.com)... 162.243.222.89
+Connecting to www.vgmusic.com (www.vgmusic.com)|162.243.222.89|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 3080 (3,0K) [text/html]
+Saving to: 'Midi files/index.html.tmp'
+
+     0K ...                                                   100% 5,40M=0,001s
+
+2020-08-25 00:05:12 (5,40 MB/s) - 'Midi files/index.html.tmp' saved [3080/3080]
+
+Loading robots.txt; please ignore errors.
+--2020-08-25 00:05:14--  https://www.vgmusic.com/robots.txt
+Reusing existing connection to www.vgmusic.com:443.
+HTTP request sent, awaiting response... 404 Not Found
+2020-08-25 00:05:14 ERROR 404: Not Found.
+
+Removing Midi files/index.html.tmp since it should be rejected.
+
+--2020-08-25 00:05:16--  https://www.vgmusic.com/music/console/?C=N;O=D
+Reusing existing connection to www.vgmusic.com:443.
+HTTP request sent, awaiting response... 200 OK
+Length: 3080 (3,0K) [text/html]
+Saving to: 'Midi files/index.html@C=N;O=D.tmp'
+
+     0K ...                                                   100% 2,56M=0,001s
+
+2020-08-25 00:05:16 (2,56 MB/s) - 'Midi files/index.html@C=N;O=D.tmp' saved [3080/3080]
+
+Removing Midi files/index.html@C=N;O=D.tmp since it should be rejected.
+
