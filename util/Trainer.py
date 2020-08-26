@@ -58,16 +58,16 @@ class Trainer(object):
 
     def _update(self, epoch, trainLoss, testLoss):
         print(
-            f'{datetime.now().time().replace(microsecond=0)} --- '
-            f'Epoch: {epoch}\t'
-            f'Train loss: {trainLoss:.2f}\t'
-            f'Valid loss: {testLoss:.2f}\t'
+            '{0} --- '.format(datetime.now().time().replace(microsecond=0)),
+            'Epoch: {0}\t'.format(epoch),
+            'Train loss: {0}\t'.format(round(trainLoss, 2)),
+            'Valid loss: {0}\t'.format(round(testLoss, 2))
         )
 
     def _load_checkpoint(self, path):
         path += '_checkpoint.pth'
 
-        print(f"[LOADING CHECKPOINT] {path}")
+        print("[LOADING CHECKPOINT] {0}".format(path))
         state = torch.load(path)
         self.model.load_state_dict(state['model_state_dict'])
         self.optim.load_state_dict(state['optimizer_state_dict'])
@@ -84,7 +84,7 @@ class Trainer(object):
         }
 
         torch.save(state, path + "_checkpoint.pth")
-        print(f"[CHECKPOINT CREATED] epoch={epoch}")
+        print("[CHECKPOINT CREATED] epoch={0}".format(epoch))
 
     def sample(self, dictpath):
         epoch = self._load_checkpoint(dictpath)
@@ -103,7 +103,7 @@ class Trainer(object):
             offset += self._load_checkpoint(dictPath)
 
         print(
-            f"[TRAINING] start={offset}, num_epochs={epochs}, batch_size={batchSize}{', seed='+ str(seed) if seed else ''}"
+            "[TRAINING] start={0}, num_epochs={1}, batch_size={2}{3}".format(offset, epochs, batchSize, ', seed='+ str(seed) if seed else '')
         )
 
         for epoch in range(offset, epochs + offset):
@@ -138,6 +138,6 @@ class Trainer(object):
         self.writer.close()
         torch.save(self.model.state_dict(), dictPath + '.pth')
         self._save_checkpoint(epoch, dictPath)
-        print(f"Training run completed\n Parameters saved to '{dictPath}'")
+        print("Training run completed\n Parameters saved to '{0}'".format(dictPath))
 
         return self.model
