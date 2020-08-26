@@ -28,14 +28,14 @@ torch.set_printoptions(threshold=5000)
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
 N_EPOCHS = 200
-BATCH_SIZE = 350
+BATCH_SIZE = 105
 SEED = 42
 LR = 1e-3
 EPS = 1e-8
 
-ROOT_PATH = "data/midi/"
-LOG_PATH = "/logs/VAE_musicgen_log"
-MOD_PATH = "/models/VAE_musicgen_model"
+ROOT_PATH = "data/"
+LOG_PATH = "./logs/VAE_musicgen_log"
+MOD_PATH = "./models/VAE_musicgen_model"
 
 class MidiDataset(Dataset):
 
@@ -146,13 +146,11 @@ class VAE(nn.Module):
         self.decoder2 = torch.nn.ModuleList([decoder2 for _ in range(N_MEASURES)])
     
     def forward(self, x0):
-        mus = []
-        sigmas = []
         x1 = torch.empty((len(x0), 3200)).to(DEVICE)
         x4 = torch.empty((len(x0), 16, MIDI_MAT)).to(DEVICE)
 
-        for i in range(N_EPOCHS):
-            x1[:,i] = self.encoder1[i](x0[:,i])
+        for i in range(N_MEASURES):
+            x1[:,i*200:(i+1)*200] = self.encoder1[i](x0[:,i])
         
         mu, sigma = self.encoder2(x1)
 
@@ -163,27 +161,9 @@ class VAE(nn.Module):
         x3 = self.decoder1(x2)
 
         for j in range(N_MEASURES):
-            x4[:,j] = self.decoder2[j](x3[:,j])    
+            x4[:,j] = self.decoder2[j](x3[:,j*200:(j+1)*200])    
 
-        # for i in range(len(x0)):
-        #     x1 = torch.empty((3200)).to(DEVICE)
-        #     for j in range(N_MEASURES):
-        #         x1[j*200:(j+1)*200] = self.encoder1[j](x0[i, j])
-
-        #     mu, sigma = self.encoder2(x1)
-        #     mus.append(mu)
-        #     sigmas.append(sigma)
-
-        #     std = torch.exp(sigma / 2)
-        #     eps = torch.randn_like(std)
-        #     x2 = eps.mul(std).add_(mu)
-
-        #     x3 = self.decoder1(x2)
-
-        #     for k in range(N_MEASURES):
-        #         x4[i, k] = self.decoder2[k](x3[k*200:(k+1)*200])
-
-        return x4, mu, sigmas
+        return x4, mu, sigma
 
     def producer(self, epoch=0, tresh=0.5):
         midi_array = torch.empty((16, MIDI_MAT)).to(DEVICE)
@@ -194,7 +174,8 @@ class VAE(nn.Module):
             midi_array[i] = self.decoder2[i](x[i*200:(i+1)*200])
 
         midi_array.to('cpu')
-        output = samples_to_midi(midi_array.detach().reshape((16, 96, 96)), f"ouput/epoch{epoch}.mid", thresh)
+        print(len(midi_array[midi_array > tresh]), "notes above the threshold of:", tresh)
+        samples_to_midi(midi_array.detach().reshape((16, 96, 96)), f"output/epoch{epoch}.mid", tresh)
 
         return midi_array
     
@@ -215,16 +196,16 @@ class VAETrainer(Trainer):
 
 
 if __name__ == "__main__":
-        data = MidiDataset("data/midi/")
+        data = MidiDataset(ROOT_PATH)
 
-        data_len = len(os.listdir("data/midi/"))
+        data_len = len(os.listdir(ROOT_PATH))
         train_len = math.floor(0.8 * data_len)
         test_len = data_len - train_len
 
         train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
 
-        train_loader = DataLoader(dataset=train_set, batch_size=1, shuffle=True)
-        test_loader = DataLoader(dataset=test_set, batch_size=1, shuffle=True)
+        train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True)
+        test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True)
 
         model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
 
@@ -234,8 +215,8 @@ if __name__ == "__main__":
         trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
 
         if sys.argv[1] == 'train':
-            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=True, output=True)
+            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=False, output=True)
 
         elif sys.argv[1] == 'test':
-            trainer.model.producer()
+            trainer.sample(MOD_PATH)
 

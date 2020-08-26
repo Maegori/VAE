@@ -86,6 +86,10 @@ class Trainer(object):
         torch.save(state, path + "_checkpoint.pth")
         print(f"[CHECKPOINT CREATED] epoch={epoch}")
 
+    def sample(self, dictpath):
+        epoch = self._load_checkpoint(dictpath)
+        self.model.producer(epoch=epoch)
+
 
     def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, output=False):
         if seed:

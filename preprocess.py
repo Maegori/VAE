@@ -1,4 +1,4 @@
-from midi96 import midi_to_samples
+from util.midi import midi_to_samples
 import os
 import math
 import numpy as np
@@ -8,8 +8,8 @@ from mido import MidiFile
 N_NOTES = 88
 N_TICKS = 96 * 16
 N_MEASURES = 16
-PATH = "MIDI files\\130000_Pop_Rock_Classical_Videogame_EDM_MIDI_Archive[6_19_15]\\M\\M\\"
-DEST = "data/midi/"
+PATH = "MidiFiles"
+DEST = "data/"
 
 if not os.path.exists(DEST):
     os.mkdir(DEST)
