@@ -87,7 +87,7 @@ class Trainer(object):
         print(f"[CHECKPOINT CREATED] epoch={epoch}")
 
 
-    def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None):
+    def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, output=False):
         if seed:
             torch.manual_seed(seed)
         
@@ -119,6 +119,8 @@ class Trainer(object):
             
             if not epoch % checkpointInterval:
                 self._save_checkpoint(epoch, dictPath)
+                if output:
+                    self.model.producer(epoch=epoch)
 
             if bestLoss > testLoss:
                 bestLoss = testLoss

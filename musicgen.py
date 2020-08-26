@@ -39,7 +39,7 @@ MOD_PATH = "/models/VAE_musicgen_model"
 
 class MidiDataset(Dataset):
 
-    def __init__(self, root_dir, transform):
+    def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
 
@@ -148,34 +148,54 @@ class VAE(nn.Module):
     def forward(self, x0):
         mus = []
         sigmas = []
+        x1 = torch.empty((len(x0), 3200)).to(DEVICE)
         x4 = torch.empty((len(x0), 16, MIDI_MAT)).to(DEVICE)
 
-        for i in range(len(x0)):
-            x1 = torch.empty((3200)).to(DEVICE)
-            for j in range(N_MEASURES):
-                x1[j*200:(j+1)*200] = self.encoder1[j](x0[i, j])
+        for i in range(N_EPOCHS):
+            x1[:,i] = self.encoder1[i](x0[:,i])
+        
+        mu, sigma = self.encoder2(x1)
 
-            mu, sigma = self.encoder2(x1)
-            mus.append(mu)
-            sigmas.append(sigma)
+        std = torch.exp(sigma / 2)
+        eps = torch.randn_like(std)
+        x2 = eps.mul(std).add_(mu)
 
-            std = torch.exp(sigma / 2)
-            eps = torch.randn_like(std)
-            x2 = eps.mul(std).add_(mu)
+        x3 = self.decoder1(x2)
 
-            x3 = self.decoder1(x2)
+        for j in range(N_MEASURES):
+            x4[:,j] = self.decoder2[j](x3[:,j])    
 
-            for k in range(N_MEASURES):
-                x4[i, k] = self.decoder2[k](x3[k*200:(k+1)*200])
+        # for i in range(len(x0)):
+        #     x1 = torch.empty((3200)).to(DEVICE)
+        #     for j in range(N_MEASURES):
+        #         x1[j*200:(j+1)*200] = self.encoder1[j](x0[i, j])
 
-        return x4, torch.stack(mus), torch.stack(sigmas)
+        #     mu, sigma = self.encoder2(x1)
+        #     mus.append(mu)
+        #     sigmas.append(sigma)
 
-    def decoder(self, sample):
-        midi_array = torch.empty((16, MIDI_MAT))
+        #     std = torch.exp(sigma / 2)
+        #     eps = torch.randn_like(std)
+        #     x2 = eps.mul(std).add_(mu)
+
+        #     x3 = self.decoder1(x2)
+
+        #     for k in range(N_MEASURES):
+        #         x4[i, k] = self.decoder2[k](x3[k*200:(k+1)*200])
+
+        return x4, mu, sigmas
+
+    def producer(self, epoch=0, tresh=0.5):
+        midi_array = torch.empty((16, MIDI_MAT)).to(DEVICE)
+        sample = torch.randn((120)).to(DEVICE)
 
         x = self.decoder1(sample)
         for i in range(N_MEASURES):
             midi_array[i] = self.decoder2[i](x[i*200:(i+1)*200])
+
+        midi_array.to('cpu')
+        output = samples_to_midi(midi_array.detach().reshape((16, 96, 96)), f"ouput/epoch{epoch}.mid", thresh)
+
         return midi_array
     
 class VAETrainer(Trainer):
@@ -185,8 +205,7 @@ class VAETrainer(Trainer):
     def calc_loss(self, x):
         x = x.view(-1, 16, MIDI_MAT)
         y, mu, sigma = self.model(x)
-  
-        
+
         reconLoss = self.crit(y, x)
 
         KLLoss = 0.5 * \
@@ -194,33 +213,9 @@ class VAETrainer(Trainer):
 
         return reconLoss + KLLoss
 
-def tester():
-    tf = transforms.ToTensor()
-    data = MidiDataset("data/midi/", tf)
-
-    train_set, test_set = torch.utils.data.random_split(data, [20000, 5000])
-
-    train_loader = DataLoader(dataset=train_set, batch_size=1, shuffle=True)
-    test_loader = DataLoader(dataset=test_set, batch_size=1, shuffle=True)
-
-    model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    criterion = nn.BCELoss(reduction='sum')
-    trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
-
-    trainer._load_checkpoint("model")
-    output = trainer.model.decoder(torch.randn((120)).to(DEVICE))
-    print(output)
-
-    samples_to_midi(output.detach().reshape((16, 96, 96)), "epoch1.mid", thresh=0.5)
-
 
 if __name__ == "__main__":
-
-    if sys.argv[1] == 'train':
-        tf = transforms.ToTensor()
-        data = MidiDataset("data/midi/", tf)
+        data = MidiDataset("data/midi/")
 
         data_len = len(os.listdir("data/midi/"))
         train_len = math.floor(0.8 * data_len)
@@ -238,8 +233,9 @@ if __name__ == "__main__":
 
         trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
 
-        trainer.run(N_EPOCHS, "model", batchSize=5, seed=SEED, checkpointInterval=20, checkpoint=False)
+        if sys.argv[1] == 'train':
+            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=True, output=True)
 
-    elif sys.argv[1] == 'test':
-        tester()
+        elif sys.argv[1] == 'test':
+            trainer.model.producer()
 

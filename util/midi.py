@@ -68,12 +68,6 @@ def midi_to_samples(fname):
                 samples.append(np.zeros((samples_per_measure, num_notes), dtype=np.uint8))
             sample = samples[sample_ix]
             start_ix = int(start - sample_ix * samples_per_measure)
-            # if False:
-            # 	end_ix = min(end - sample_ix * samples_per_measure, samples_per_measure)
-            # 	while start_ix < end_ix:
-            # 		sample[start_ix, note] = 1
-            # 		start_ix += 1
-            # else:
             sample[start_ix, note] = 1
     return samples
 
