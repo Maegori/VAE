@@ -124,16 +124,20 @@ class Trainer(object):
             if not epoch % checkpointInterval:
                 self._save_checkpoint(epoch, dictPath)
                 if output:
+                    self.model.eval()
+                    self.model.to('cpu')
                     self.model.producer(epoch=epoch)
+                    self.model.to(self.device)
+                    self.model.train()
 
-            if bestLoss > testLoss:
-                bestLoss = testLoss
-                patience = 1
-            else:
-                patience += 1
+            # if bestLoss > testLoss:
+            #     bestLoss = testLoss
+            #     patience = 1
+            # else:
+            #     patience += 1
 
-            if patience > 3:
-                break
+            # if patience > 3:
+            #     break
 
         self.writer.close()
         torch.save(self.model.state_dict(), dictPath + '.pth')

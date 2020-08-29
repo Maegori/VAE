@@ -22,16 +22,14 @@ from util.midi import samples_to_midi
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-torch.cuda.empty_cache()
 torch.set_printoptions(threshold=5000)
 
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
 N_EPOCHS = 200
-BATCH_SIZE = 105
+BATCH_SIZE = 250
 SEED = 42
-LR = 1e-3
-EPS = 1e-8
+LR = 1e-6
 
 ROOT_PATH = "data/"
 LOG_PATH = "./logs/VAE_musicgen_log"
@@ -42,16 +40,21 @@ class MidiDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
+        self.data = []
+
+        folder = os.listdir(root_dir)
+        
+        print("Loading data {0} samples...".format(len(folder)))
+        for i in range(len(folder)):
+            with open(root_dir+folder[i], "rb") as tp:
+                self.data.append(torch.load(tp))
+        print("Data loading complete!")
 
     def __len__(self):
         return len(os.listdir(self.root_dir))
 
     def __getitem__(self, idx):
-        folder = os.listdir(self.root_dir)
-
-        with open(self.root_dir + folder[idx], "rb") as tp:
-            X = torch.load(tp)
-        return X
+        return self.data[idx]
 
 class Encoder1(nn.Module):
     """
@@ -146,8 +149,8 @@ class VAE(nn.Module):
         self.decoder2 = torch.nn.ModuleList([decoder2 for _ in range(N_MEASURES)])
     
     def forward(self, x0):
-        x1 = torch.empty((len(x0), 3200)).to(DEVICE)
-        x4 = torch.empty((len(x0), 16, MIDI_MAT)).to(DEVICE)
+        x1 = torch.empty((len(x0), 3200), device=DEVICE)
+        x4 = torch.empty((len(x0), 16, MIDI_MAT), device=DEVICE)
 
         for i in range(N_MEASURES):
             x1[:,i*200:(i+1)*200] = self.encoder1[i](x0[:,i])
@@ -162,22 +165,25 @@ class VAE(nn.Module):
 
         for j in range(N_MEASURES):
             x4[:,j] = self.decoder2[j](x3[:,j*200:(j+1)*200])    
-
+        
         return x4, mu, sigma
 
     def producer(self, epoch=0, tresh=0.5):
-        midi_array = torch.empty((16, MIDI_MAT)).to(DEVICE)
-        sample = torch.randn((120)).to(DEVICE)
+        midi_array = torch.empty((16, MIDI_MAT), device='cpu')
+        sample = torch.randn((120), device='cpu')
 
         x = self.decoder1(sample)
         for i in range(N_MEASURES):
             midi_array[i] = self.decoder2[i](x[i*200:(i+1)*200])
 
-        midi_array.to('cpu')
-        print(len(midi_array[midi_array > tresh]), "notes above the threshold of:", tresh)
-        samples_to_midi(midi_array.detach().reshape((16, 96, 96)), f"output/epoch{epoch}.mid", tresh)
+        # midi_array.to('cpu')
+        viable_notes = len(midi_array[midi_array > tresh]) 
+        print(viable_notes, "notes above the threshold of:", tresh)
+        if viable_notes == 0:
+            return 
+        samples_to_midi(midi_array.detach().reshape((16, 96, 96)), "output/epoch{0}.mid".format(epoch), tresh)
 
-        return midi_array
+        return 
     
 class VAETrainer(Trainer):
     def __init__(self, model, optimizer, criterion, trainloader, testloader, logPath):
@@ -204,8 +210,8 @@ if __name__ == "__main__":
 
         train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
 
-        train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True)
-        test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True)
+        train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
+        test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
 
         model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
 
@@ -215,7 +221,7 @@ if __name__ == "__main__":
         trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
 
         if sys.argv[1] == 'train':
-            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=False, output=True)
+            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=1, checkpoint=True, output=True)
 
         elif sys.argv[1] == 'test':
             trainer.sample(MOD_PATH)
