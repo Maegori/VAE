@@ -18,6 +18,7 @@ from matplotlib.widgets import Slider, Button
 import numpy as np
 
 from util.Trainer import Trainer
+from util.Tester import Tester
 from util.midi import samples_to_midi
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -202,27 +203,31 @@ class VAETrainer(Trainer):
 
 
 if __name__ == "__main__":
-        data = MidiDataset(ROOT_PATH)
-
-        data_len = len(os.listdir(ROOT_PATH))
-        train_len = math.floor(0.8 * data_len)
-        test_len = data_len - train_len
-
-        train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
-
-        train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
-        test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
-
-        model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-        criterion = nn.BCELoss(reduction='sum')
-
-        trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
 
         if sys.argv[1] == 'train':
+            data = MidiDataset(ROOT_PATH)
+
+            data_len = len(os.listdir(ROOT_PATH))
+            train_len = math.floor(0.8 * data_len)
+            test_len = data_len - train_len
+
+            train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
+
+            train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
+            test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
+
+            model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
+
+            optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+            criterion = nn.BCELoss(reduction='sum')
+
+            trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
             trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=1, checkpoint=True, output=True)
 
         elif sys.argv[1] == 'test':
-            trainer.sample(MOD_PATH)
+            model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
+            tester = Tester(model, MOD_PATH, model.producer)
+
+            tester.sample(tester.epoch)
+            
 
