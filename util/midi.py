@@ -82,7 +82,6 @@ def samples_to_midi(samples, fname, thresh=0.5):
     abs_time = 0
     last_time = 0
     last_tick = samples[0].shape[0] - 1
-    print(last_tick)
 
     for j, sample in enumerate(samples):
         s = np.argwhere(sample>thresh)

@@ -27,7 +27,7 @@ torch.set_printoptions(threshold=5000)
 
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
-N_EPOCHS = 200
+N_EPOCHS = 1480
 BATCH_SIZE = 250
 SEED = 42
 LR = 1e-6
@@ -163,7 +163,6 @@ class VAE(nn.Module):
         x2 = eps.mul(std).add_(mu)
 
         x3 = self.decoder1(x2)
-
         for j in range(N_MEASURES):
             x4[:,j] = self.decoder2[j](x3[:,j*200:(j+1)*200])    
         
@@ -177,18 +176,17 @@ class VAE(nn.Module):
         for i in range(N_MEASURES):
             midi_array[i] = self.decoder2[i](x[i*200:(i+1)*200])
 
-        # midi_array.to('cpu')
         viable_notes = len(midi_array[midi_array > tresh]) 
         print(viable_notes, "notes above the threshold of:", tresh)
         if viable_notes == 0:
-            return 
+            return []
         samples_to_midi(midi_array.detach().reshape((16, 96, 96)), "output/epoch{0}.mid".format(epoch), tresh)
 
-        return 
+        return midi_array.detach().reshape((16, 96, 96))
     
 class VAETrainer(Trainer):
-    def __init__(self, model, optimizer, criterion, trainloader, testloader, logPath):
-        super().__init__(model, optimizer, criterion, trainloader, testloader, logPath)
+    def __init__(self, model, optimizer, criterion, trainloader, testloader,logPath, device, sample_func):
+        super().__init__(model, optimizer, criterion, trainloader, testloader, logPath, device, sample_func)
 
     def calc_loss(self, x):
         x = x.view(-1, 16, MIDI_MAT)
@@ -196,14 +194,13 @@ class VAETrainer(Trainer):
 
         reconLoss = self.crit(y, x)
 
-        KLLoss = 0.5 * \
-            torch.sum(torch.exp(sigma) + mu*mu - 1.0 - sigma)
+        KLLoss = 0.5 * torch.sum(torch.exp(sigma) + mu*mu - 1.0 - sigma)
 
         return reconLoss + KLLoss
 
-
 if __name__ == "__main__":
 
+        model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
         if sys.argv[1] == 'train':
             data = MidiDataset(ROOT_PATH)
 
@@ -216,16 +213,13 @@ if __name__ == "__main__":
             train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
             test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
 
-            model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
-
             optimizer = torch.optim.Adam(model.parameters(), lr=LR)
             criterion = nn.BCELoss(reduction='sum')
 
-            trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH)
-            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=1, checkpoint=True, output=True)
+            trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH, device=DEVICE, sample_func=model.producer)
+            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=1, checkpoint=True, patience_stop=False, output=True)
 
         elif sys.argv[1] == 'test':
-            model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
             tester = Tester(model, MOD_PATH, model.producer)
 
             tester.sample(tester.epoch)

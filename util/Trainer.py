@@ -11,13 +11,14 @@ class Trainer(object):
         by defining the calc_loss() function for your data and network
     """
 
-    def __init__(self, model, optimizer, criterion, trainLoader, testLoader, logPath):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    def __init__(self, model, optimizer, criterion, trainLoader, testLoader, logPath, device='cpu', sample_func=None):
+        self.device = device
         self.writer = SummaryWriter(logPath)
 
         self.model = model.to(self.device)
         self.trainLoader = trainLoader
         self.testLoader = testLoader
+        self.sample_func = sample_func
 
         self.optim = optimizer
         self.crit = criterion
@@ -37,7 +38,6 @@ class Trainer(object):
 
         for batch in self.trainLoader:
             self.optim.zero_grad()
-            
             loss = self.calc_loss(batch.to(self.device))
             runningLoss += loss.item()
             loss.backward()
@@ -86,12 +86,15 @@ class Trainer(object):
         torch.save(state, path + "_checkpoint.pth")
         print("[CHECKPOINT CREATED] epoch={0}".format(epoch))
 
-    def sample(self, dictpath):
-        epoch = self._load_checkpoint(dictpath)
-        self.model.producer(epoch=epoch)
+    def sample(self, *args):
+        self.model.eval()
+        self.model.to('cpu')
+        self.sample_func(*args)
+        self.model.to(self.device)
+        self.model.train()
 
 
-    def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, output=False):
+    def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, patience_stop=False, output=False):
         if seed:
             torch.manual_seed(seed)
         
@@ -124,20 +127,17 @@ class Trainer(object):
             if not epoch % checkpointInterval:
                 self._save_checkpoint(epoch, dictPath)
                 if output:
-                    self.model.eval()
-                    self.model.to('cpu')
-                    self.model.producer(epoch=epoch)
-                    self.model.to(self.device)
-                    self.model.train()
+                    self.sample(epoch)
 
-            # if bestLoss > testLoss:
-            #     bestLoss = testLoss
-            #     patience = 1
-            # else:
-            #     patience += 1
+            if patience_stop:
+                if bestLoss > testLoss:
+                    bestLoss = testLoss
+                    patience = 1
+                else:
+                    patience += 1
 
-            # if patience > 3:
-            #     break
+                if patience > 3:
+                    break
 
         self.writer.close()
         torch.save(self.model.state_dict(), dictPath + '.pth')
