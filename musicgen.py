@@ -23,11 +23,9 @@ from util.midi import samples_to_midi
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-torch.set_printoptions(threshold=5000)
-
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
-N_EPOCHS = 1480
+N_EPOCHS = 2000
 BATCH_SIZE = 250
 SEED = 42
 LR = 1e-6
@@ -179,10 +177,10 @@ class VAE(nn.Module):
         viable_notes = len(midi_array[midi_array > tresh]) 
         print(viable_notes, "notes above the threshold of:", tresh)
         if viable_notes == 0:
-            return []
+            return 
         samples_to_midi(midi_array.detach().reshape((16, 96, 96)), "output/epoch{0}.mid".format(epoch), tresh)
 
-        return midi_array.detach().reshape((16, 96, 96))
+        return
     
 class VAETrainer(Trainer):
     def __init__(self, model, optimizer, criterion, trainloader, testloader,logPath, device, sample_func):
