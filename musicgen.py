@@ -25,8 +25,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
-N_EPOCHS = 2000
-BATCH_SIZE = 250
+N_EPOCHS = 10
+BATCH_SIZE = 500
 SEED = 42
 LR = 1e-6
 
@@ -34,26 +34,21 @@ ROOT_PATH = "data/"
 LOG_PATH = "./logs/VAE_musicgen_log"
 MOD_PATH = "./models/VAE_musicgen_model"
 
+
 class MidiDataset(Dataset):
 
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
-        self.data = []
-
-        folder = os.listdir(root_dir)
-        
-        print("Loading data {0} samples...".format(len(folder)))
-        for i in range(len(folder)):
-            with open(root_dir+folder[i], "rb") as tp:
-                self.data.append(torch.load(tp))
-        print("Data loading complete!")
+        self.folder = os.listdir(self.root_dir)
 
     def __len__(self):
         return len(os.listdir(self.root_dir))
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        with open(self.root_dir + self.folder[idx], "rb") as tp:
+            X = torch.load(tp)
+        return X
 
 class Encoder1(nn.Module):
     """
@@ -200,6 +195,7 @@ if __name__ == "__main__":
 
         model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
         if sys.argv[1] == 'train':
+            print(sum(p.numel() for p in model.parameters()))
             data = MidiDataset(ROOT_PATH)
 
             data_len = len(os.listdir(ROOT_PATH))
@@ -208,14 +204,14 @@ if __name__ == "__main__":
 
             train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
 
-            train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
-            test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=1)
+            train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=6, pin_memory=True)
+            test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=6, pin_memory=True)
 
             optimizer = torch.optim.Adam(model.parameters(), lr=LR)
             criterion = nn.BCELoss(reduction='sum')
 
             trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH, device=DEVICE, sample_func=model.producer)
-            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=1, checkpoint=True, patience_stop=False, output=True)
+            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=False, patience_stop=False, output=False)
 
         elif sys.argv[1] == 'test':
             tester = Tester(model, MOD_PATH, model.producer)

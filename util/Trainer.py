@@ -15,7 +15,7 @@ class Trainer(object):
         self.device = device
         self.writer = SummaryWriter(logPath)
 
-        self.model = model.to(self.device)
+        self.model = model.to(self.device, non_blocking=True)
         self.trainLoader = trainLoader
         self.testLoader = testLoader
         self.sample_func = sample_func
@@ -38,8 +38,8 @@ class Trainer(object):
 
         for batch in self.trainLoader:
             self.optim.zero_grad()
-            loss = self.calc_loss(batch.to(self.device))
-            runningLoss += loss.item()
+            loss = self.calc_loss(batch.to(self.device, non_blocking=True))
+            runningLoss += loss.detach().item()
             loss.backward()
             self.optim.step()
 
@@ -51,8 +51,8 @@ class Trainer(object):
 
         with torch.no_grad():
             for batch in self.testLoader:
-                loss = self.calc_loss(batch.to(self.device))
-                runningLoss += loss.item()
+                loss = self.calc_loss(batch.to(self.device, non_blocking=True))
+                runningLoss += loss.detach().item()
 
         return runningLoss / self._lenTest
 
@@ -88,9 +88,9 @@ class Trainer(object):
 
     def sample(self, *args):
         self.model.eval()
-        self.model.to('cpu')
+        self.model.to('cpu', non_blocking=True)
         self.sample_func(*args)
-        self.model.to(self.device)
+        self.model.to(self.device, non_blocking=True)
         self.model.train()
 
 
