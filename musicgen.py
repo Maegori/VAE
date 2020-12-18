@@ -1,21 +1,14 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
 from torch.utils.data import DataLoader, Dataset
-from torchvision import datasets, transforms
+from torchvision import transforms
 
 import sys
 import random
 import os
 import math
-
-import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button
-
-import numpy as np
 
 from util.Trainer import Trainer
 from util.Tester import Tester
@@ -23,30 +16,129 @@ from util.midi import samples_to_midi
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+N_NOTES = 96
+NOTES_PER_MEASURE = 96
 MIDI_MAT = 96 * 96
 N_MEASURES = 16
-N_EPOCHS = 10
-BATCH_SIZE = 500
+
+CHUNK = False     # wether or not to rechunk the data, set to True if its the first time training
+N_EPOCHS = 2000
+BATCH_SIZE = 512
 SEED = 42
-LR = 1e-6
+LR = 1e-2
 
 ROOT_PATH = "data/"
 LOG_PATH = "./logs/VAE_musicgen_log"
 MOD_PATH = "./models/VAE_musicgen_model"
 
+class MultiEpochsDataLoader(torch.utils.data.DataLoader):
+    """ Dataloader and sampler (class below this one) which don't have to initialize at each epoch, credit to:
+    https://github.com/rwightman/pytorch-image-models/blob/d72ac0db259275233877be8c1d4872163954dfbb/timm/data/loader.py#L209-L238
+    will bottleneck if data loading in Dataset is too slow, see MidiDataset._chunker() for more info.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._DataLoader__initialized = False
+        self.batch_sampler = _RepeatSampler(self.batch_sampler)
+        self._DataLoader__initialized = True
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield next(self.iterator)
+
+class _RepeatSampler(object):
+    """ Sampler that repeats forever.
+    Args:
+        sampler (Sampler)
+    """
+
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)
 
 class MidiDataset(Dataset):
 
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir, batch_size, chunker=True,transform=None, shuffle=False):
         self.root_dir = root_dir
         self.transform = transform
+        self.batch_size = batch_size
         self.folder = os.listdir(self.root_dir)
+        self.shuffle = shuffle
 
+        if chunker:
+            self._chunker()
+
+        if not os.path.exists("data_temp"):
+            print("data_temp folder not found, make sure to chunk the data first with CHUNK=True on first run.")
+            sys.exit()
+        else:
+            self.batch_files = os.listdir("data_temp")
+
+
+    def _chunker(self):
+        """Chunks the data into batch_size chunks to reduce IO, 
+        will delete previously chunked batches if called.
+        """
+
+        if not os.path.exists("data_temp"):
+            os.makedirs("data_temp")
+        else:
+            print("Deleting previous chunks...")
+            
+            files = os.listdir("data_temp")
+            for f in files:
+                os.remove(os.path.join("data_temp", f))
+        
+        if self.shuffle:
+            random.shuffle(self.folder)
+            folder = self.folder
+        else:
+            folder = self.folder
+
+        print("Creating chunks of size:", self.batch_size)
+
+        n_batches = math.floor(len(folder) / self.batch_size)
+        rem = len(folder) % self.batch_size
+
+        # chunk individual arrays together into a single batch
+        for b in range(n_batches):
+            batch = torch.empty((self.batch_size, N_MEASURES, NOTES_PER_MEASURE, N_NOTES))
+            for i in range(self.batch_size):
+                with open(self.root_dir + folder[i + b * self.batch_size], "rb") as tp:
+                    batch[i] = torch.load(tp)
+            
+            with open(f"data_temp/batch{b}.tp", "wb") as tp:
+                torch.save(batch, tp)
+
+        # chunk the remainder together into a single batch
+        if rem == 0:
+            print("Chunking done")
+        else:
+            batch = torch.empty((rem, N_MEASURES, NOTES_PER_MEASURE, N_NOTES))
+            for r in range(rem):
+                with open(self.root_dir + folder[r + n_batches * self.batch_size], "rb") as tp:
+                    batch[r] = torch.load(tp)
+
+            with open(f"data_temp/batch{n_batches + 1}.tp", "wb") as tp:
+                torch.save(batch, tp)
+
+            print("chunking done")
+
+        self.batch_files = os.listdir("data_temp")
+            
     def __len__(self):
-        return len(os.listdir(self.root_dir))
+        return len(os.listdir("data_temp"))
 
     def __getitem__(self, idx):
-        with open(self.root_dir + self.folder[idx], "rb") as tp:
+        with open("data_temp/" + self.batch_files[idx], "rb") as tp:
             X = torch.load(tp)
         return X
 
@@ -144,7 +236,7 @@ class VAE(nn.Module):
     
     def forward(self, x0):
         x1 = torch.empty((len(x0), 3200), device=DEVICE)
-        x4 = torch.empty((len(x0), 16, MIDI_MAT), device=DEVICE)
+        x4 = torch.empty((len(x0), N_MEASURES, MIDI_MAT), device=DEVICE)
 
         for i in range(N_MEASURES):
             x1[:,i*200:(i+1)*200] = self.encoder1[i](x0[:,i])
@@ -161,7 +253,7 @@ class VAE(nn.Module):
         
         return x4, mu, sigma
 
-    def producer(self, epoch=0, tresh=0.5):
+    def producer(self, epoch=0, tresh=0.15):
         midi_array = torch.empty((16, MIDI_MAT), device='cpu')
         sample = torch.randn((120), device='cpu')
 
@@ -182,7 +274,7 @@ class VAETrainer(Trainer):
         super().__init__(model, optimizer, criterion, trainloader, testloader, logPath, device, sample_func)
 
     def calc_loss(self, x):
-        x = x.view(-1, 16, MIDI_MAT)
+        x = x.view(-1, N_MEASURES, MIDI_MAT)
         y, mu, sigma = self.model(x)
 
         reconLoss = self.crit(y, x)
@@ -191,31 +283,39 @@ class VAETrainer(Trainer):
 
         return reconLoss + KLLoss
 
+def collate_wrapper(batch):
+    """ Since we handle the batching ourselves, we need to change the collate
+    function too.
+    """
+    return batch[0]
+
 if __name__ == "__main__":
 
-        model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
-        if sys.argv[1] == 'train':
-            print(sum(p.numel() for p in model.parameters()))
-            data = MidiDataset(ROOT_PATH)
+    try:
+        sys.argv[1]
+    except IndexError:
+        print("Usage:\n'python musicgen.py train' to train the model \nor \n'python musicgen.py test' to sample from the model")
+        sys.exit()
 
-            data_len = len(os.listdir(ROOT_PATH))
-            train_len = math.floor(0.8 * data_len)
-            test_len = data_len - train_len
+    model = VAE(Encoder1(), Encoder2(), Decoder1(), Decoder2())
+    if sys.argv[1] == 'train':
+        data = MidiDataset(ROOT_PATH, BATCH_SIZE, chunker=CHUNK)
 
-            train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
+        train_len = math.floor(0.8 * len(data))
+        test_len = len(data) - train_len
 
-            train_loader = DataLoader(dataset=train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=6, pin_memory=True)
-            test_loader = DataLoader(dataset=test_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=6, pin_memory=True)
+        train_set, test_set = torch.utils.data.random_split(data, [train_len, test_len])
 
-            optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-            criterion = nn.BCELoss(reduction='sum')
+        train_loader = MultiEpochsDataLoader(dataset=train_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
+        test_loader = MultiEpochsDataLoader(dataset=test_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
 
-            trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH, device=DEVICE, sample_func=model.producer)
-            trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=False, patience_stop=False, output=False)
+        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+        criterion = nn.BCELoss(reduction='sum')
 
-        elif sys.argv[1] == 'test':
-            tester = Tester(model, MOD_PATH, model.producer)
+        trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH, device=DEVICE, sample_func=model.producer)
+        trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=True, patience_stop=False, output=False)
 
-            tester.sample(tester.epoch)
-            
+    elif sys.argv[1] == 'test':
+        tester = Tester(model, MOD_PATH, model.producer)
 
+        tester.sample(tester.epoch)

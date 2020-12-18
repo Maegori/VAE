@@ -12,10 +12,21 @@ class Trainer(object):
     """
 
     def __init__(self, model, optimizer, criterion, trainLoader, testLoader, logPath, device='cpu', sample_func=None):
+        """
+        model:          nn.Module to train with
+        optimizer:      optimizer for the model
+        criterion:      criterion for the model
+        trainLoader:    dataloader for the train set
+        testLoader:     dataloader for the test set
+        LogPath:        relative path to tensorboard logs
+        device:         device on which to train
+        sample_func:    function by which to sample from the model (for output during the training)
+        """
+
         self.device = device
         self.writer = SummaryWriter(logPath)
 
-        self.model = model.to(self.device, non_blocking=True)
+        self.model = model.to(self.device)
         self.trainLoader = trainLoader
         self.testLoader = testLoader
         self.sample_func = sample_func
@@ -23,8 +34,8 @@ class Trainer(object):
         self.optim = optimizer
         self.crit = criterion
 
-        self._lenTrain = len(trainLoader.dataset)
-        self._lenTest = len(testLoader.dataset)
+        self._lenTrain = len(trainLoader)
+        self._lenTest = len(testLoader)
 
     def calc_loss(self, *args):
         """Calculates and returns the loss for a batch of data.
@@ -33,12 +44,14 @@ class Trainer(object):
         raise NotImplementedError
 
     def _train(self):
+        """Calculate test loss and backpropogates the error
+        """
         self.model.train()
         runningLoss = 0
 
         for batch in self.trainLoader:
             self.optim.zero_grad()
-            loss = self.calc_loss(batch.to(self.device, non_blocking=True))
+            loss = self.calc_loss(batch.to(self.device))
             runningLoss += loss.detach().item()
             loss.backward()
             self.optim.step()
@@ -46,17 +59,21 @@ class Trainer(object):
         return runningLoss / self._lenTrain
 
     def _validate(self):
+        """ Calculate validation loss
+        """
         self.model.eval()
         runningLoss = 0
 
         with torch.no_grad():
             for batch in self.testLoader:
-                loss = self.calc_loss(batch.to(self.device, non_blocking=True))
+                loss = self.calc_loss(batch.to(self.device))
                 runningLoss += loss.detach().item()
 
         return runningLoss / self._lenTest
 
     def _update(self, epoch, trainLoss, testLoss):
+        """ Printed at every epoch to show progress
+        """
         print(
             '{0} --- '.format(datetime.now().time().replace(microsecond=0)),
             'Epoch: {0}\t'.format(epoch),
@@ -65,6 +82,8 @@ class Trainer(object):
         )
 
     def _load_checkpoint(self, path):
+        """Function to load a saved model from path
+        """
         path += '_checkpoint.pth'
 
         print("[LOADING CHECKPOINT] {0}".format(path))
@@ -76,6 +95,8 @@ class Trainer(object):
         return state['epoch']
 
     def _save_checkpoint(self, epoch, path):
+        """Function to save a model to path
+        """
         state = {
             'epoch' : epoch,
             'model_state_dict' : self.model.state_dict(),
@@ -87,6 +108,8 @@ class Trainer(object):
         print("[CHECKPOINT CREATED] epoch={0}".format(epoch))
 
     def sample(self, *args):
+        """ Puts the model in evaluation mode to sample from the model
+        """
         self.model.eval()
         self.model.to('cpu', non_blocking=True)
         self.sample_func(*args)
@@ -95,6 +118,17 @@ class Trainer(object):
 
 
     def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, patience_stop=False, output=False):
+        """
+        epochs:             number of epochs to run
+        dictPath:           relative path to saved model  
+        batchSize:          size of batches
+        checkpointInterval: interval at which to save the model
+        checkpoint:         wether or not to load a saved model
+        seed:               seed for random generators
+        patience_stop:      wether or not to stop when patience is exceeded
+        output:             wether or not to output samples from the model during the training
+        """
+
         if seed:
             torch.manual_seed(seed)
         
