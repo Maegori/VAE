@@ -22,13 +22,12 @@ MIDI_MAT = 96 * 96
 N_MEASURES = 16
 
 CHUNK = False     # wether or not to rechunk the data, set to True if its the first time training
-N_EPOCHS = 2000
+N_EPOCHS = 500
 BATCH_SIZE = 512
 SEED = 42
-LR = 1e-2
+LR = 1e-3
 
 ROOT_PATH = "data/"
-LOG_PATH = "./logs/VAE_musicgen_log"
 MOD_PATH = "./models/VAE_musicgen_model"
 
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
@@ -253,7 +252,7 @@ class VAE(nn.Module):
         
         return x4, mu, sigma
 
-    def producer(self, epoch=0, tresh=0.15):
+    def producer(self, epoch=0, tresh=0.5):
         midi_array = torch.empty((16, MIDI_MAT), device='cpu')
         sample = torch.randn((120), device='cpu')
 
@@ -309,11 +308,13 @@ if __name__ == "__main__":
         train_loader = MultiEpochsDataLoader(dataset=train_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
         test_loader = MultiEpochsDataLoader(dataset=test_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
 
+
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
         criterion = nn.BCELoss(reduction='sum')
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1, steps_per_epoch=len(train_loader)*BATCH_SIZE, epochs=N_EPOCHS, div_factor=100000, verbose=False)
 
-        trainer = VAETrainer(model, optimizer, criterion, train_loader, test_loader, LOG_PATH, device=DEVICE, sample_func=model.producer)
-        trainer.run(N_EPOCHS, MOD_PATH, batchSize=BATCH_SIZE, seed=SEED, checkpointInterval=10, checkpoint=True, patience_stop=False, output=False)
+        trainer = VAETrainer(model, optimizer, criterion, scheduler, train_loader, test_loader, device=DEVICE, sample_func=model.producer)
+        trainer.run(N_EPOCHS, BATCH_SIZE)
 
     elif sys.argv[1] == 'test':
         tester = Tester(model, MOD_PATH, model.producer)

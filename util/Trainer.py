@@ -4,6 +4,14 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn as nn
 
+LOGPATH = "./logs/VAE_musicgen_log"
+MOD_PATH = "./models/VAE_musicgen_model"
+
+CHECKPOINT_INTERVAL = 10
+LOAD_FROM_CHECKPOINT = True
+SEED = 42
+PATIENCE_STOP = False
+OUTPUT = False
 
 class Trainer(object):
     """
@@ -11,11 +19,12 @@ class Trainer(object):
         by defining the calc_loss() function for your data and network
     """
 
-    def __init__(self, model, optimizer, criterion, trainLoader, testLoader, logPath, device='cpu', sample_func=None):
+    def __init__(self, model, optimizer, criterion, scheduler, trainLoader, testLoader, device='cpu', sample_func=None):
         """
         model:          nn.Module to train with
         optimizer:      optimizer for the model
         criterion:      criterion for the model
+        scheduler:      scheduler for the model
         trainLoader:    dataloader for the train set
         testLoader:     dataloader for the test set
         LogPath:        relative path to tensorboard logs
@@ -24,7 +33,7 @@ class Trainer(object):
         """
 
         self.device = device
-        self.writer = SummaryWriter(logPath)
+        self.writer = SummaryWriter(LOGPATH)
 
         self.model = model.to(self.device)
         self.trainLoader = trainLoader
@@ -33,6 +42,7 @@ class Trainer(object):
 
         self.optim = optimizer
         self.crit = criterion
+        self.sched = scheduler
 
         self._lenTrain = len(trainLoader)
         self._lenTest = len(testLoader)
@@ -55,6 +65,7 @@ class Trainer(object):
             runningLoss += loss.detach().item()
             loss.backward()
             self.optim.step()
+            self.sched.step()
 
         return runningLoss / self._lenTrain
 
@@ -116,31 +127,25 @@ class Trainer(object):
         self.model.to(self.device, non_blocking=True)
         self.model.train()
 
-
-    def run(self, epochs, dictPath, batchSize=64, checkpointInterval=20, checkpoint=False, seed=None, patience_stop=False, output=False):
+    def run(self, epochs, batch_size):
         """
         epochs:             number of epochs to run
         dictPath:           relative path to saved model  
         batchSize:          size of batches
-        checkpointInterval: interval at which to save the model
-        checkpoint:         wether or not to load a saved model
-        seed:               seed for random generators
-        patience_stop:      wether or not to stop when patience is exceeded
-        output:             wether or not to output samples from the model during the training
         """
 
-        if seed:
-            torch.manual_seed(seed)
+        if SEED:
+            torch.manual_seed(SEED)
         
         bestLoss = float('inf')
         patience = 0
         offset = 1
         
-        if checkpoint:
-            offset += self._load_checkpoint(dictPath)
+        if LOAD_FROM_CHECKPOINT:
+            offset += self._load_checkpoint(MOD_PATH)
 
         print(
-            "[TRAINING] start={0}, num_epochs={1}, batch_size={2}{3}".format(offset, epochs, batchSize, ', seed='+ str(seed) if seed else '')
+            "[TRAINING] start={0}, num_epochs={1}, batch_size={2}{3}".format(offset, epochs, batch_size, ', seed='+ str(SEED) if SEED else '')
         )
 
         for epoch in range(offset, epochs + offset):
@@ -158,12 +163,12 @@ class Trainer(object):
 
             self._update(epoch, trainLoss, testLoss)
             
-            if not epoch % checkpointInterval:
-                self._save_checkpoint(epoch, dictPath)
-                if output:
+            if not epoch % CHECKPOINT_INTERVAL:
+                self._save_checkpoint(epoch, MOD_PATH)
+                if OUTPUT:
                     self.sample(epoch)
 
-            if patience_stop:
+            if PATIENCE_STOP:
                 if bestLoss > testLoss:
                     bestLoss = testLoss
                     patience = 1
@@ -174,8 +179,8 @@ class Trainer(object):
                     break
 
         self.writer.close()
-        torch.save(self.model.state_dict(), dictPath + '.pth')
-        self._save_checkpoint(epoch, dictPath)
-        print("Training run completed\n Parameters saved to '{0}'".format(dictPath))
+        torch.save(self.model.state_dict(), MOD_PATH + '.pth')
+        self._save_checkpoint(epoch, MOD_PATH)
+        print("Training run completed\n Parameters saved to '{0}'".format(MOD_PATH))
 
         return self.model
