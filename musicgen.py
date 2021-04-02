@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
 
 import sys
 import random
@@ -26,11 +24,13 @@ N_EPOCHS = 500
 BATCH_SIZE = 512
 SEED = 42
 LR = 1e-3
+DO_RATE = 0.1
+BN_M = 0.9
 
 ROOT_PATH = "data/"
 MOD_PATH = "./models/VAE_musicgen_model"
 
-class MultiEpochsDataLoader(torch.utils.data.DataLoader):
+class MultiEpochsDataLoader(DataLoader):
     """ Dataloader and sampler (class below this one) which don't have to initialize at each epoch, credit to:
     https://github.com/rwightman/pytorch-image-models/blob/d72ac0db259275233877be8c1d4872163954dfbb/timm/data/loader.py#L209-L238
     will bottleneck if data loading in Dataset is too slow, see MidiDataset._chunker() for more info.
@@ -141,6 +141,31 @@ class MidiDataset(Dataset):
             X = torch.load(tp)
         return X
 
+class TimeDistributed(nn.Module):
+    def __init__(self, module, batch_first=False):
+        super(TimeDistributed, self).__init__()
+        self.module = module
+        self.batch_first = batch_first
+
+    def forward(self, x):
+
+        if len(x.size()) <= 2:
+            return self.module(x)
+
+        # Squash samples and timesteps into a single axis
+        x_reshape = x.contiguous().view(-1, x.size(-1))  # (samples * timesteps, input_size)
+
+        y = self.module(x_reshape)
+
+        # We have to reshape Y
+        if self.batch_first:
+            y = y.contiguous().view(x.size(0), -1, y.size(-1))  # (samples, timesteps, output_size)
+        else:
+            y = y.view(-1, x.size(1), y.size(-1))  # (timesteps, samples, output_size)
+
+        return y
+
+
 class Encoder1(nn.Module):
     """
     Pre-encoder of the network, one is created for each measure.
@@ -170,7 +195,7 @@ class Encoder2(nn.Module):
         super().__init__()
 
         self.encoder = nn.Sequential(
-            nn.Linear(N_MEASURES * 200, 1600), 
+            nn.Linear(200, 1600), 
             nn.ReLU(),
         )
 
@@ -194,10 +219,16 @@ class Decoder1(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Linear(120, 1600),
+            nn.BatchNorm1d(16, momentum=BN_M),
             nn.ReLU(),
-            nn.Linear(1600, N_MEASURES * 200),
-            nn.ReLU()
+            nn.Dropout(DO_RATE),
+            nn.Linear(1600, 200),
+            nn.BatchNorm1d(16, momentum=BN_M),
+            nn.ReLU(),
+            nn.Dropout(DO_RATE)
         )
+
+
 
     def forward(self, x):
         return self.decoder(x)
@@ -212,10 +243,13 @@ class Decoder2(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Linear(200, 2000),
+            nn.BatchNorm1d(16, momentum=BN_M),
             nn.ReLU(),
+            nn.Dropout(DO_RATE),
             nn.Linear(2000, MIDI_MAT),
             nn.Sigmoid()
         )
+
     
     def forward(self, x):
         return self.decoder(x)
@@ -228,18 +262,15 @@ class VAE(nn.Module):
     def __init__(self, encoder1, encoder2, decoder1, decoder2):
         super().__init__()
 
-        self.encoder1 = torch.nn.ModuleList([encoder1 for _ in range(N_MEASURES)])
+        # self.encoder1 = torch.nn.ModuleList([encoder1 for _ in range(N_MEASURES)])
+        self.encoder1 = encoder1
         self.encoder2 = encoder2
         self.decoder1 = decoder1
-        self.decoder2 = torch.nn.ModuleList([decoder2 for _ in range(N_MEASURES)])
+        # self.decoder2 = torch.nn.ModuleList([decoder2 for _ in range(N_MEASURES)])
+        self.decoder2 = decoder2
     
     def forward(self, x0):
-        x1 = torch.empty((len(x0), 3200), device=DEVICE)
-        x4 = torch.empty((len(x0), N_MEASURES, MIDI_MAT), device=DEVICE)
-
-        for i in range(N_MEASURES):
-            x1[:,i*200:(i+1)*200] = self.encoder1[i](x0[:,i])
-        
+        x1 = self.encoder1(x0)
         mu, sigma = self.encoder2(x1)
 
         std = torch.exp(sigma / 2)
@@ -247,9 +278,7 @@ class VAE(nn.Module):
         x2 = eps.mul(std).add_(mu)
 
         x3 = self.decoder1(x2)
-        for j in range(N_MEASURES):
-            x4[:,j] = self.decoder2[j](x3[:,j*200:(j+1)*200])    
-        
+        x4 = self.decoder2(x3)
         return x4, mu, sigma
 
     def producer(self, epoch=0, tresh=0.5):
@@ -269,8 +298,8 @@ class VAE(nn.Module):
         return
     
 class VAETrainer(Trainer):
-    def __init__(self, model, optimizer, criterion, trainloader, testloader,logPath, device, sample_func):
-        super().__init__(model, optimizer, criterion, trainloader, testloader, logPath, device, sample_func)
+    def __init__(self, model, optimizer, criterion, trainloader, testloader, batch_size, logPath, device, sample_func):
+        super().__init__(model, optimizer, criterion, trainloader, testloader, batch_size, logPath, device, sample_func)
 
     def calc_loss(self, x):
         x = x.view(-1, N_MEASURES, MIDI_MAT)
@@ -308,12 +337,11 @@ if __name__ == "__main__":
         train_loader = MultiEpochsDataLoader(dataset=train_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
         test_loader = MultiEpochsDataLoader(dataset=test_set, batch_size=1, collate_fn=collate_wrapper, shuffle=True, num_workers=6, pin_memory=True, prefetch_factor=4)
 
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+        optimizer = optim.Adam(model.parameters(), lr=LR)
         criterion = nn.BCELoss(reduction='sum')
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1, steps_per_epoch=len(train_loader)*BATCH_SIZE, epochs=N_EPOCHS, div_factor=100000, verbose=False)
 
-        trainer = VAETrainer(model, optimizer, criterion, scheduler, train_loader, test_loader, device=DEVICE, sample_func=model.producer)
+        trainer = VAETrainer(model, optimizer, criterion, scheduler, train_loader, test_loader, BATCH_SIZE, device=DEVICE, sample_func=model.producer)
         trainer.run(N_EPOCHS, BATCH_SIZE)
 
     elif sys.argv[1] == 'test':

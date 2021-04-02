@@ -8,7 +8,7 @@ LOGPATH = "./logs/VAE_musicgen_log"
 MOD_PATH = "./models/VAE_musicgen_model"
 
 CHECKPOINT_INTERVAL = 10
-LOAD_FROM_CHECKPOINT = True
+LOAD_FROM_CHECKPOINT = False
 SEED = 42
 PATIENCE_STOP = False
 OUTPUT = False
@@ -19,7 +19,7 @@ class Trainer(object):
         by defining the calc_loss() function for your data and network
     """
 
-    def __init__(self, model, optimizer, criterion, scheduler, trainLoader, testLoader, device='cpu', sample_func=None):
+    def __init__(self, model, optimizer, criterion, scheduler, trainLoader, testLoader, batch_size, device='cpu', sample_func=None):
         """
         model:          nn.Module to train with
         optimizer:      optimizer for the model
@@ -43,6 +43,7 @@ class Trainer(object):
         self.optim = optimizer
         self.crit = criterion
         self.sched = scheduler
+        self.batch_size = batch_size
 
         self._lenTrain = len(trainLoader)
         self._lenTest = len(testLoader)
@@ -61,9 +62,9 @@ class Trainer(object):
 
         for batch in self.trainLoader:
             self.optim.zero_grad()
-            loss = self.calc_loss(batch.to(self.device))
-            runningLoss += loss.detach().item()
+            loss = self.calc_loss(batch.to(self.device)) / self.batch_size
             loss.backward()
+            runningLoss += loss.detach().item() 
             self.optim.step()
             self.sched.step()
 
@@ -77,7 +78,7 @@ class Trainer(object):
 
         with torch.no_grad():
             for batch in self.testLoader:
-                loss = self.calc_loss(batch.to(self.device))
+                loss = self.calc_loss(batch.to(self.device)) / self.batch_size
                 runningLoss += loss.detach().item()
 
         return runningLoss / self._lenTest
