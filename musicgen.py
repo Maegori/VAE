@@ -20,7 +20,7 @@ MIDI_MAT = 96 * 96
 N_MEASURES = 16
 
 CHUNK = False     # wether or not to rechunk the data, set to True if its the first time training
-N_EPOCHS = 500
+N_EPOCHS = 2500
 BATCH_SIZE = 512
 SEED = 42
 LR = 1e-3
@@ -165,7 +165,6 @@ class TimeDistributed(nn.Module):
 
         return y
 
-
 class Encoder1(nn.Module):
     """
     Pre-encoder of the network, one is created for each measure.
@@ -195,12 +194,12 @@ class Encoder2(nn.Module):
         super().__init__()
 
         self.encoder = nn.Sequential(
-            nn.Linear(200, 1600), 
+            nn.Linear(3200, 1600), 
             nn.ReLU(),
         )
 
-        self.mu = nn.Linear(1600, 120)
-        self.sigma = nn.Linear(1600, 120)
+        self.mu = nn.Linear(1600, 1024)
+        self.sigma = nn.Linear(1600, 1024)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -218,12 +217,12 @@ class Decoder1(nn.Module):
         super().__init__()
 
         self.decoder = nn.Sequential(
-            nn.Linear(120, 1600),
-            nn.BatchNorm1d(16, momentum=BN_M),
+            nn.Linear(1024, 1600),
+            nn.BatchNorm1d(1600, momentum=BN_M),
             nn.ReLU(),
             nn.Dropout(DO_RATE),
-            nn.Linear(1600, 200),
-            nn.BatchNorm1d(16, momentum=BN_M),
+            nn.Linear(1600, 200 * N_MEASURES),
+            nn.BatchNorm1d(200 * N_MEASURES, momentum=BN_M),
             nn.ReLU(),
             nn.Dropout(DO_RATE)
         )
@@ -243,7 +242,7 @@ class Decoder2(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Linear(200, 2000),
-            nn.BatchNorm1d(16, momentum=BN_M),
+            nn.modules.BatchNorm1d(16, momentum=BN_M),
             nn.ReLU(),
             nn.Dropout(DO_RATE),
             nn.Linear(2000, MIDI_MAT),
@@ -262,32 +261,30 @@ class VAE(nn.Module):
     def __init__(self, encoder1, encoder2, decoder1, decoder2):
         super().__init__()
 
-        # self.encoder1 = torch.nn.ModuleList([encoder1 for _ in range(N_MEASURES)])
         self.encoder1 = encoder1
         self.encoder2 = encoder2
         self.decoder1 = decoder1
-        # self.decoder2 = torch.nn.ModuleList([decoder2 for _ in range(N_MEASURES)])
         self.decoder2 = decoder2
     
     def forward(self, x0):
-        x1 = self.encoder1(x0)
+        x1 = self.encoder1(x0).view(x0.shape[0], 3200)
         mu, sigma = self.encoder2(x1)
 
         std = torch.exp(sigma / 2)
         eps = torch.randn_like(std)
         x2 = eps.mul(std).add_(mu)
-
-        x3 = self.decoder1(x2)
+        
+        x3 = self.decoder1(x2).view(x0.shape[0], N_MEASURES, 200)
         x4 = self.decoder2(x3)
+        
         return x4, mu, sigma
 
-    def producer(self, epoch=0, tresh=0.5):
+    def producer(self, epoch=0, tresh=0.15):
         midi_array = torch.empty((16, MIDI_MAT), device='cpu')
-        sample = torch.randn((120), device='cpu')
+        sample = torch.randn((1, 1024), device='cpu')
 
-        x = self.decoder1(sample)
-        for i in range(N_MEASURES):
-            midi_array[i] = self.decoder2[i](x[i*200:(i+1)*200])
+        x = self.decoder1(sample).view(1, 16, 200)
+        midi_array = self.decoder2(x)
 
         viable_notes = len(midi_array[midi_array > tresh]) 
         print(viable_notes, "notes above the threshold of:", tresh)
@@ -309,6 +306,7 @@ class VAETrainer(Trainer):
 
         KLLoss = 0.5 * torch.sum(torch.exp(sigma) + mu*mu - 1.0 - sigma)
 
+        print(f"Reconstruction loss: {reconLoss/x.shape(0)}, KL loss: {KLLoss/x.shape(0)}")
         return reconLoss + KLLoss
 
 def collate_wrapper(batch):
